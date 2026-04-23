@@ -3,52 +3,59 @@ Robot Voice Toy for SuperCollider
 
 How to use:
 1. Evaluate this whole file.
-2. A window will open. Click inside the window to focus it.
-3. Move the mouse:
+2. Move the mouse anywhere on the screen:
    - X changes pitch
-   - Y changes the growl / pulse speed
-4. Press keys: a i u e o
-5. Close the window to stop the sound.
+   - Y changes growl depth
+3. Use the volume slider if you want it louder.
+4. Click the window, then press keys: a i u e o or 1 2 3 4 5
+5. Press Space to mute / unmute.
+6. Close the window or press Cmd+. to stop.
 */
 
 (
 s.waitForBoot({
-	var win, label, info, synth;
-	var vowelPresets;
+	var win, label, info, volumeLabel, volumeSlider, muteLabel, synth;
+	var vowelPresets, applyVowel, setVowel;
+	var currentAmp = 0.20, isMuted = false, toggleMute;
 
 	vowelPresets = (
-		a: [800, 1150, 2900, 0.018, "A"],
-		i: [350, 1700, 2700, 0.010, "I"],
-		u: [325, 700, 2530, 0.022, "U"],
-		e: [500, 1750, 2450, 0.015, "E"],
-		o: [450, 800, 2830, 0.020, "O"]
+		a: [800, 1150, 2900, 0.040, "A"],
+		i: [350, 1700, 2700, 0.030, "I"],
+		u: [325, 700, 2530, 0.050, "U"],
+		e: [500, 1750, 2450, 0.035, "E"],
+		o: [450, 800, 2830, 0.045, "O"]
 	);
 
 	SynthDef(\robotVoiceToy, {
-		|out = 0, pitch = 110, growl = 3, gateRate = 7,
-		f1 = 800, f2 = 1150, f3 = 2900, rq = 0.02, amp = 0.18|
-		var base, vibrato, voiced, formants, chatter, robot, env;
+		|out = 0, f1 = 800, f2 = 1150, f3 = 2900, rq = 0.04, amp = 0.14|
+		var pitch, growl, wobbleDepth, vibrato, base;
+		var voiced, formants, slowWobble, robot, env;
+
+		// Mouse UGens are server-side, so movement works even if GUI focus is weird.
+		pitch = MouseX.kr(70, 280, 1).round(2);
+		growl = MouseY.kr(1.2, 12.0);
+		wobbleDepth = MouseY.kr(0.04, 0.22);
 
 		vibrato = SinOsc.kr(growl, 0, pitch * 0.03);
 		base = (pitch + vibrato).clip(50, 400);
 
 		voiced = Mix([
-			Saw.ar(base, 0.12),
-			Pulse.ar(base * 1.01, 0.42, 0.08),
-			SinOsc.ar(base * 2, 0, 0.03)
+			Saw.ar(base, 0.10),
+			Pulse.ar(base * 1.01, 0.42, 0.06),
+			SinOsc.ar(base * 2, 0, 0.025)
 		]);
 
 		formants = Mix([
-			BPF.ar(voiced, f1, rq, 1.2),
-			BPF.ar(voiced, f2, rq * 0.8, 1.0),
-			BPF.ar(voiced, f3, rq * 0.6, 0.7)
+			BPF.ar(voiced, f1, rq, 1.8),
+			BPF.ar(voiced, f2, rq * 0.9, 1.3),
+			BPF.ar(voiced, f3, rq * 0.8, 0.9)
 		]);
 
-		chatter = LFPulse.kr(gateRate, 0, 0.42).lag(0.01);
-		robot = formants * chatter;
-		robot = robot * SinOsc.ar(26, 0, 0.25, 0.75);
-		robot = robot + (WhiteNoise.ar(0.012) * chatter);
-		robot = LeakDC.ar(tanh(robot * 4));
+		slowWobble = SinOsc.kr(growl * 0.35, 0, wobbleDepth, 1 - (wobbleDepth * 0.5));
+		robot = formants * slowWobble;
+		robot = robot * SinOsc.ar(26, 0, 0.18, 0.82);
+		robot = robot + WhiteNoise.ar(0.002);
+		robot = LeakDC.ar(tanh(robot * 2.5));
 		robot = HPF.ar(robot, 90);
 
 		env = EnvGen.kr(Env.asr(0.02, 1, 0.2), 1);
@@ -57,33 +64,61 @@ s.waitForBoot({
 
 	s.sync;
 
-	synth = Synth(\robotVoiceToy, [
-		\pitch, 110,
-		\growl, 3,
-		\gateRate, 7
-	]);
+	synth = Synth(\robotVoiceToy, [\amp, 0.20]);
 
 	win = Window("Robot Voice Toy", Rect(120, 120, 520, 220)).front;
 	win.alwaysOnTop_(true);
 	win.view.background_(Color.gray(0.14));
+	win.view.canFocus_(true);
+	win.view.focus;
 
-	label = StaticText(win, Rect(20, 18, 480, 28))
+	label = StaticText(win, Rect(20, 18, 480, 30))
 		.string_("Robot vowel: A")
 		.stringColor_(Color.white)
 		.font_(Font("Helvetica", 22));
 
-	info = StaticText(win, Rect(20, 60, 480, 120))
+	info = StaticText(win, Rect(20, 54, 480, 78))
 		.string_(
-			"Move mouse in the window:\n" ++
-			"X = pitch, Y = growl speed\n" ++
-			"Press keys: a i u e o\n" ++
-			"Close the window to stop"
+			"Move mouse anywhere on screen:\n" ++
+			"X = pitch, Y = growl depth\n\n" ++
+			"Press: a i u e o or 1 2 3 4 5\n" ++
+			"Space = mute / unmute, Cmd+. = stop"
 		)
 		.stringColor_(Color.gray(0.88))
 		.font_(Font("Helvetica", 16));
 
-	win.view.keyDownAction_({ |view, char|
-		var key = char.asString.toLower.asSymbol;
+	volumeLabel = StaticText(win, Rect(20, 137, 100, 22))
+		.string_("Volume")
+		.stringColor_(Color.gray(0.88))
+		.font_(Font("Helvetica", 14));
+
+	volumeSlider = Slider(win, Rect(90, 139, 250, 20))
+		.value_(0.78)
+		.action_({ |slider|
+			currentAmp = slider.value.linexp(0, 1, 0.02, 0.38);
+			if(isMuted.not) {
+				synth.set(\amp, currentAmp);
+			};
+			win.view.focus;
+		});
+
+	muteLabel = StaticText(win, Rect(360, 137, 140, 22))
+		.string_("Sound: on")
+		.stringColor_(Color.gray(0.88))
+		.font_(Font("Helvetica", 14));
+
+	toggleMute = {
+		isMuted = isMuted.not;
+		if(isMuted) {
+			synth.set(\amp, 0);
+			muteLabel.string = "Sound: muted";
+		} {
+			synth.set(\amp, currentAmp);
+			muteLabel.string = "Sound: on";
+		};
+	};
+
+	applyVowel = { |key|
 		var preset = vowelPresets[key];
 
 		if(preset.notNil) {
@@ -95,31 +130,54 @@ s.waitForBoot({
 			);
 			label.string = "Robot vowel: " ++ preset[4];
 		};
+	};
+
+	setVowel = { |char|
+		var key = char.asString.toLower;
+		var vowelKey = key.asSymbol;
+
+		if(key == " ") {
+			toggleMute.value;
+		} {
+			if(key == "1") { vowelKey = \a };
+			if(key == "2") { vowelKey = \i };
+			if(key == "3") { vowelKey = \u };
+			if(key == "4") { vowelKey = \e };
+			if(key == "5") { vowelKey = \o };
+			applyVowel.value(vowelKey);
+		};
+	};
+
+	Button(win, Rect(20, 166, 56, 32))
+		.states_([["A", Color.white, Color.gray(0.28)]])
+		.action_({ applyVowel.value(\a); win.view.focus; });
+
+	Button(win, Rect(86, 166, 56, 32))
+		.states_([["I", Color.white, Color.gray(0.28)]])
+		.action_({ applyVowel.value(\i); win.view.focus; });
+
+	Button(win, Rect(152, 166, 56, 32))
+		.states_([["U", Color.white, Color.gray(0.28)]])
+		.action_({ applyVowel.value(\u); win.view.focus; });
+
+	Button(win, Rect(218, 166, 56, 32))
+		.states_([["E", Color.white, Color.gray(0.28)]])
+		.action_({ applyVowel.value(\e); win.view.focus; });
+
+	Button(win, Rect(284, 166, 56, 32))
+		.states_([["O", Color.white, Color.gray(0.28)]])
+		.action_({ applyVowel.value(\o); win.view.focus; });
+
+	win.view.mouseDownAction_({
+		win.view.focus;
 	});
 
-	AppClock.sched(0.0, {
-		if(win.isClosed or: { synth.isPlaying.not }) {
-			nil
-		} {
-			var mousePos = win.view.mousePosition;
-			var xNorm = (mousePos.x / win.view.bounds.width).clip(0, 1);
-			var yNorm = (1 - (mousePos.y / win.view.bounds.height)).clip(0, 1);
-			var pitch = xNorm.linexp(0, 1, 70, 280).round(2);
-			var growl = yNorm.linlin(0, 1, 1.2, 12.0);
-			var gateRate = yNorm.linlin(0, 1, 3.0, 16.0);
-
-			synth.set(
-				\pitch, pitch,
-				\growl, growl,
-				\gateRate, gateRate
-			);
-
-			0.03
-		}
+	win.view.keyDownAction_({ |view, char|
+		setVowel.value(char);
 	});
 
 	win.onClose_({
-		if(synth.isPlaying) { synth.free };
+		if(synth.notNil) { synth.free };
 	});
 });
 )
