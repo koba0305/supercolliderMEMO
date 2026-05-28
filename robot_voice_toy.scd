@@ -9,14 +9,16 @@ How to use:
 3. Use the volume slider if you want it louder.
 4. Click the window, then press keys: a i u e o or 1 2 3 4 5
 5. Press Space to mute / unmute.
-6. Close the window or press Cmd+. to stop.
+6. Press Record / Stop rec to save a WAV into ./recordings.
+7. Close the window or press Cmd+. to stop.
 */
 
 (
 s.waitForBoot({
-	var win, label, info, volumeLabel, volumeSlider, muteLabel, synth;
-	var vowelPresets, applyVowel, setVowel;
-	var currentAmp = 0.20, isMuted = false, toggleMute;
+	var win, label, info, volumeLabel, volumeSlider, muteLabel, recordButton, recordLabel, synth;
+	var vowelPresets, applyVowel, setVowel, startRecording, stopRecording, toggleRecording;
+	var currentAmp = 0.20, isMuted = false, isRecording = false, toggleMute;
+	var recordDir, recordingPath;
 
 	vowelPresets = (
 		a: [800, 1150, 2900, 0.040, "A"],
@@ -65,8 +67,14 @@ s.waitForBoot({
 	s.sync;
 
 	synth = Synth(\robotVoiceToy, [\amp, 0.20]);
+	recordDir = (thisProcess.nowExecutingPath.notNil).if({
+		thisProcess.nowExecutingPath.dirname +/+ "recordings"
+	}, {
+		Platform.recordingsDir
+	});
+	recordDir.mkdir;
 
-	win = Window("Robot Voice Toy", Rect(120, 120, 520, 220)).front;
+	win = Window("Robot Voice Toy", Rect(120, 120, 520, 260)).front;
 	win.alwaysOnTop_(true);
 	win.view.background_(Color.gray(0.14));
 	win.view.canFocus_(true);
@@ -80,10 +88,10 @@ s.waitForBoot({
 	info = StaticText(win, Rect(20, 54, 480, 78))
 		.string_(
 			"Move mouse anywhere on screen:\n" ++
-			"X = pitch, Y = growl depth\n\n" ++
-			"Press: a i u e o or 1 2 3 4 5\n" ++
-			"Space = mute / unmute, Cmd+. = stop"
-		)
+				"X = pitch, Y = growl depth\n\n" ++
+				"Press: a i u e o or 1 2 3 4 5\n" ++
+				"Space = mute / unmute, Record = WAV"
+			)
 		.stringColor_(Color.gray(0.88))
 		.font_(Font("Helvetica", 16));
 
@@ -107,6 +115,17 @@ s.waitForBoot({
 		.stringColor_(Color.gray(0.88))
 		.font_(Font("Helvetica", 14));
 
+	recordButton = Button(win, Rect(360, 166, 120, 32))
+		.states_([
+			["Record", Color.white, Color.gray(0.28)],
+			["Stop rec", Color.white, Color.red(0.55)]
+		]);
+
+	recordLabel = StaticText(win, Rect(20, 210, 470, 22))
+		.string_("Recording: off")
+		.stringColor_(Color.gray(0.88))
+		.font_(Font("Helvetica", 13));
+
 	toggleMute = {
 		isMuted = isMuted.not;
 		if(isMuted) {
@@ -117,6 +136,37 @@ s.waitForBoot({
 			muteLabel.string = "Sound: on";
 		};
 	};
+
+	startRecording = {
+		if(isRecording.not) {
+			recordingPath = recordDir +/+ ("robot_voice_toy_" ++ Date.getDate.stamp ++ ".wav");
+			s.prepareForRecord(recordingPath, numChannels: 2);
+			s.record;
+			isRecording = true;
+			recordButton.value = 1;
+			recordLabel.string = "Recording: " ++ recordingPath;
+		};
+	};
+
+	stopRecording = {
+		if(isRecording) {
+			s.stopRecording;
+			isRecording = false;
+			recordButton.value = 0;
+			recordLabel.string = "Saved: " ++ recordingPath;
+		};
+	};
+
+	toggleRecording = {
+		if(isRecording) {
+			stopRecording.value;
+		} {
+			startRecording.value;
+		};
+		win.view.focus;
+	};
+
+	recordButton.action_({ toggleRecording.value; });
 
 	applyVowel = { |key|
 		var preset = vowelPresets[key];
@@ -177,6 +227,7 @@ s.waitForBoot({
 	});
 
 	win.onClose_({
+		stopRecording.value;
 		if(synth.notNil) { synth.free };
 	});
 });
